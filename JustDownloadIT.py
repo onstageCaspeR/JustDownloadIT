@@ -30,10 +30,13 @@ import re
 import sys
 import json
 import time
+import hashlib
 import zipfile
 import shutil
 import threading
 import platform
+import tempfile
+import uuid
 import urllib.request
 import subprocess
 import tkinter as tk
@@ -54,6 +57,19 @@ else:
 FFMPEG_DIR = os.path.join(APP_DIR, "ffmpeg_bin")
 BUNDLED_FFMPEG_DIR = os.path.join(BUNDLE_DIR, "ffmpeg_bin")
 RECENT_FILE = os.path.join(APP_DIR, "justdownloadit_recent.json")
+
+APP_VERSION = "1.2.0"
+GITHUB_REPOSITORY = "onstageCaspeR/JustDownloadIT"
+GITHUB_LATEST_RELEASE_API = (
+    f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest"
+)
+RELEASES_PAGE_URL = f"https://github.com/{GITHUB_REPOSITORY}/releases/latest"
+UPDATE_CHECK_STATE_FILE = os.path.join(APP_DIR, "justdownloadit_update.json")
+UPDATE_CHECK_INTERVAL = 24 * 60 * 60
+UPDATE_INSTALL_DIR = os.path.join(
+    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "JustDownloadIT"
+)
+UPDATE_INSTALLER_NAME = "JustDownloadIT-Setup.exe"
 
 FFMPEG_WIN_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 
@@ -91,6 +107,19 @@ FONT_BUTTON = ("Segoe UI", 10, "bold")
 FONT_SMALL = ("Segoe UI", 8)
 FONT_ICON = ("Segoe UI Symbol", 14, "bold")
 FONT_ICON_LG = ("Segoe UI Symbol", 22, "bold")
+
+
+def parse_release_version(value):
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", str(value).strip())
+    if not match:
+        return None
+    return tuple(int(part) for part in match.groups())
+
+
+def is_newer_version(candidate, current=APP_VERSION):
+    candidate_version = parse_release_version(candidate)
+    current_version = parse_release_version(current)
+    return bool(candidate_version and current_version and candidate_version > current_version)
 
 
 def find_ffmpeg():
@@ -560,6 +589,269 @@ class JustDownloadITApp:
                     "for best results."
                 )
 
+        if self._is_managed_install():
+            self.root.after(1200, self._check_for_updates)
+
+    @staticmethod
+    def _is_managed_install():
+        if os.name != "nt" or not getattr(sys, "frozen", False):
+            return False
+        installed_dir = os.path.normcase(os.path.abspath(UPDATE_INSTALL_DIR))
+        running_dir = os.path.normcase(os.path.abspath(APP_DIR))
+        return installed_dir == running_dir
+
+    def _check_for_updates(self):
+        try:
+            with open(UPDATE_CHECK_STATE_FILE, "r", encoding="utf-8") as f:
+                last_check = float(json.load(f).get("last_check", 0))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            last_check = 0
+        if time.time() - last_check < UPDATE_CHECK_INTERVAL:
+            return
+        threading.Thread(target=self._fetch_latest_release, daemon=True).start()
+
+    def _fetch_latest_release(self):
+        request = urllib.request.Request(
+            GITHUB_LATEST_RELEASE_API,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": f"JustDownloadIT/{APP_VERSION}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                release = json.loads(response.read(2 * 1024 * 1024).decode("utf-8"))
+            with open(UPDATE_CHECK_STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump({"last_check": time.time()}, f)
+        except Exception:
+            return
+
+        if not isinstance(release, dict):
+            return
+        tag = release.get("tag_name", "")
+        if not is_newer_version(tag):
+            return
+        assets = release.get("assets") or []
+        installer = next(
+            (asset for asset in assets if asset.get("name") == UPDATE_INSTALLER_NAME),
+            None,
+        )
+        if not installer:
+            return
+        asset_url = installer.get("browser_download_url", "")
+        if not self._valid_release_asset_url(asset_url):
+            return
+        release["_installer_asset"] = installer
+        release["_checksum_asset"] = next(
+            (
+                asset for asset in assets
+                if asset.get("name") == f"{UPDATE_INSTALLER_NAME}.sha256"
+            ),
+            None,
+        )
+        try:
+            self.root.after(0, self._offer_update, release)
+        except tk.TclError:
+            pass
+
+    def _offer_update(self, release):
+        version = release["tag_name"].lstrip("v")
+        notes = (release.get("body") or "").strip()
+        if len(notes) > 500:
+            notes = notes[:497] + "..."
+        details = f"\n\nRelease notes:\n{notes}" if notes else ""
+        accepted = messagebox.askyesno(
+            "Free update available",
+            f"JustDownloadIT {version} is available. This app and its updates are free.\n\n"
+            f"Update now? The app will close, install the update, and reopen.{details}",
+            parent=self.root,
+        )
+        if not accepted:
+            self.status_var.set(f"Update {version} available; you can install it later.")
+            return
+        self.status_var.set(f"Downloading free update {version}…")
+        threading.Thread(
+            target=self._download_update,
+            args=(release,),
+            daemon=True,
+        ).start()
+
+    @staticmethod
+    def _valid_release_asset_url(url):
+        expected_prefix = (
+            f"https://github.com/{GITHUB_REPOSITORY}/releases/download/"
+        )
+        return str(url).lower().startswith(expected_prefix.lower())
+
+    @staticmethod
+    def _is_github_asset_host(url):
+        lowered = str(url).lower()
+        return lowered.startswith((
+            "https://github.com/",
+            "https://release-assets.githubusercontent.com/",
+            "https://objects.githubusercontent.com/",
+        ))
+
+    def _download_update(self, release):
+        asset = release["_installer_asset"]
+        checksum_asset = release.get("_checksum_asset")
+        url = asset["browser_download_url"]
+        expected_digest = asset.get("digest") or ""
+        if expected_digest.startswith("sha256:"):
+            expected_digest = expected_digest.split(":", 1)[1].lower()
+        else:
+            expected_digest = ""
+
+        installer_path = os.path.join(
+            tempfile.gettempdir(),
+            f"JustDownloadIT-Setup-{uuid.uuid4().hex}.exe",
+        )
+        try:
+            if not self._valid_release_asset_url(url):
+                raise RuntimeError("The release installer URL is not trusted.")
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": f"JustDownloadIT/{APP_VERSION}"},
+            )
+            digest = hashlib.sha256()
+            written = 0
+            total = int(asset.get("size") or 0)
+            with urllib.request.urlopen(request, timeout=30) as response:
+                if not self._is_github_asset_host(response.geturl()):
+                    raise RuntimeError("The installer download redirected to an untrusted host.")
+                with open(installer_path, "wb") as output:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        written += len(chunk)
+                        if written > 200 * 1024 * 1024:
+                            raise RuntimeError("The installer is unexpectedly large.")
+                        output.write(chunk)
+                        digest.update(chunk)
+                        if total:
+                            pct = min(100, written * 100 / total)
+                            try:
+                                self.root.after(
+                                    0, self._set_update_progress, pct, release["tag_name"]
+                                )
+                            except tk.TclError:
+                                pass
+
+            if total and written != total:
+                raise RuntimeError("The downloaded installer size does not match GitHub's release metadata.")
+
+            if not expected_digest and checksum_asset:
+                checksum_url = checksum_asset.get("browser_download_url", "")
+                if not self._valid_release_asset_url(checksum_url):
+                    raise RuntimeError("The release checksum URL is not trusted.")
+                checksum_request = urllib.request.Request(
+                    checksum_url,
+                    headers={"User-Agent": f"JustDownloadIT/{APP_VERSION}"},
+                )
+                with urllib.request.urlopen(checksum_request, timeout=15) as response:
+                    if not self._is_github_asset_host(response.geturl()):
+                        raise RuntimeError("The checksum download redirected to an untrusted host.")
+                    checksum_text = response.read(4096).decode("ascii", errors="strict")
+                match = re.search(r"\b([0-9a-fA-F]{64})\b", checksum_text)
+                if match:
+                    expected_digest = match.group(1).lower()
+
+            if not re.fullmatch(r"[0-9a-f]{64}", expected_digest):
+                raise RuntimeError("The release has no valid SHA-256 checksum.")
+            if digest.hexdigest() != expected_digest:
+                raise RuntimeError("The installer failed its SHA-256 integrity check.")
+
+            try:
+                self.root.after(
+                    0, self._launch_update_installer, installer_path, release["tag_name"]
+                )
+            except tk.TclError:
+                pass
+        except Exception as e:
+            try:
+                if os.path.isfile(installer_path):
+                    os.remove(installer_path)
+            except OSError:
+                pass
+            try:
+                self.root.after(0, self._update_failed, str(e))
+            except tk.TclError:
+                pass
+
+    def _set_update_progress(self, pct, version):
+        self.status_var.set(f"Downloading update {version}… {pct:.0f}%")
+
+    @staticmethod
+    def _powershell_quote(value):
+        return "'" + str(value).replace("'", "''") + "'"
+
+    def _launch_update_installer(self, installer_path, version):
+        powershell = os.path.join(
+            os.environ.get("WINDIR", r"C:\Windows"),
+            "System32",
+            "WindowsPowerShell",
+            "v1.0",
+            "powershell.exe",
+        )
+        script_path = os.path.join(
+            tempfile.gettempdir(), f"jdit_update_{uuid.uuid4().hex}.ps1"
+        )
+        app_path = os.path.join(UPDATE_INSTALL_DIR, "JustDownloadIT.exe")
+        script = (
+            f"$parentId = {os.getpid()}\n"
+            "while (Get-Process -Id $parentId -ErrorAction SilentlyContinue) "
+            "{ Start-Sleep -Milliseconds 250 }\n"
+            f"$setup = {self._powershell_quote(installer_path)}\n"
+            f"$app = {self._powershell_quote(app_path)}\n"
+            "$p = Start-Process -FilePath $setup "
+            "-ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' "
+            "-Wait -PassThru\n"
+            "if ($p.ExitCode -eq 0 -and (Test-Path -LiteralPath $app)) "
+            "{ Start-Process -FilePath $app }\n"
+            "Remove-Item -LiteralPath $setup -Force -ErrorAction SilentlyContinue\n"
+            "Remove-Item -LiteralPath $MyInvocation.MyCommand.Path "
+            "-Force -ErrorAction SilentlyContinue\n"
+        )
+        try:
+            with open(script_path, "w", encoding="utf-8-sig") as f:
+                f.write(script)
+            subprocess.Popen(
+                [
+                    powershell,
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    script_path,
+                ],
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                close_fds=True,
+            )
+        except Exception as e:
+            try:
+                os.remove(script_path)
+            except OSError:
+                pass
+            self._update_failed(str(e))
+            return
+        self.status_var.set(f"Installing update {version}…")
+        self.root.destroy()
+
+    def _update_failed(self, error):
+        self.status_var.set("The update could not be installed.")
+        messagebox.showwarning(
+            "Update failed",
+            f"The update could not be installed:\n{error}\n\n"
+            f"You can download it manually from:\n{RELEASES_PAGE_URL}",
+            parent=self.root,
+        )
+
     # ---------- STYLE SETUP (RUNS ONCE) ----------
     def _setup_styles(self):
         style = ttk.Style()
@@ -656,6 +948,7 @@ class JustDownloadITApp:
         # ---------- DOWNLOAD FORM PANEL ----------
         form = RoundedPanel(container, bg=PANEL)
         form.pack(fill="x", pady=(0, 14))
+        self.form_panel = form
         fb = form.body
 
         pad = {"padx": 18, "pady": 8}
@@ -862,7 +1155,7 @@ class JustDownloadITApp:
     def _show_success_banner(self, message, auto_hide_ms=4000):
         self.success_msg.config(text=message)
         try:
-            self.success_banner.pack(fill="x", padx=0, pady=(0, 12), before=None)
+            self.success_banner.pack(fill="x", padx=0, pady=(0, 12), before=self.form_panel)
         except Exception:
             self.success_banner.pack(fill="x", padx=0, pady=(0, 12))
         self.success_banner.tkraise()
@@ -1287,7 +1580,7 @@ class JustDownloadITApp:
                 item.saved_path = saved_path or ""
                 item.title = title or item.title
                 item.progress = 100.0
-                self._add_recent(saved_path, title, item.url)
+                self.root.after(0, self._add_recent, saved_path, title, item.url)
                 self.root.after(0, self._on_item_success, idx, item, from_queue)
             except Exception as e:
                 item.status = "failed"
@@ -1439,10 +1732,19 @@ if %errorlevel% neq 0 (
 
 echo Installing build tools and dependencies...
 python -m pip install --upgrade pip >nul
-python -m pip install yt-dlp pyinstaller
+python -m pip install yt-dlp pyinstaller pillow
+
+REM Bundle the app icon if it is next to this script (otherwise the .exe
+REM falls back to PyInstaller's default icon).
+set EXTRA=
+if exist app_icon.ico set EXTRA=%EXTRA% --icon app_icon.ico
+if exist ffmpeg_bin\ffmpeg.exe set EXTRA=%EXTRA% --add-binary "ffmpeg_bin\ffmpeg.exe;ffmpeg_bin"
+
+if not exist app_icon.ico echo NOTE: app_icon.ico not found here - built .exe will use the default icon.
+if not exist ffmpeg_bin\ffmpeg.exe echo NOTE: ffmpeg_bin\ffmpeg.exe not found - the built .exe will auto-download ffmpeg on first run.
 
 echo Building JustDownloadIT.exe ...
-pyinstaller --onefile --windowed --name JustDownloadIT JustDownloadIT.py
+pyinstaller --onefile --windowed --name JustDownloadIT %EXTRA% JustDownloadIT.py
 
 echo.
 echo ============================================================
@@ -1465,10 +1767,14 @@ def main():
         return
 
     root = tk.Tk()
-    try:
-        root.iconbitmap(default="")
-    except Exception:
-        pass
+    for base in (APP_DIR, BUNDLE_DIR):
+        icon_path = os.path.join(base, "app_icon.ico")
+        if os.path.isfile(icon_path):
+            try:
+                root.iconbitmap(icon_path)
+            except Exception:
+                pass
+            break
     app = JustDownloadITApp(root)
     root.mainloop()
 

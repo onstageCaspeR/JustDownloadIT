@@ -45,7 +45,8 @@ check("Recent JSON renamed: justdownloadit_recent.json",
       '"justdownloadit_recent.json"' in src)
 check("BUILD_SCRIPT_CONTENT uses JustDownloadIT.exe",
       "JustDownloadIT.exe" in src and
-      "--name JustDownloadIT JustDownloadIT.py" in src)
+      "--name JustDownloadIT" in src and
+      "JustDownloadIT.py" in src)
 check("main() instantiates JustDownloadITApp",
       "app = JustDownloadITApp(root)" in src)
 

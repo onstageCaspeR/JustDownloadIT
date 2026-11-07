@@ -153,9 +153,23 @@ Copy the compiled installer to `release\JustDownloadIT-Setup.exe` for upload to 
 
 ## 5. Pre-built Releases (GitHub Releases)
 
-Once this repository is published to GitHub, pre-built `JustDownloadIT-Setup.exe` installers will be available under the **Releases** tab of the repository. Users can simply download the latest `.Setup.exe` and double-click to install — no Python or build tools required.
+Pre-built `JustDownloadIT-Setup.exe` installers are published on the [GitHub Releases page](https://github.com/onstageCaspeR/JustDownloadIT/releases). Users can download the installer and double-click to install; Python and build tools are not needed.
 
-Check [Releases](https://github.com/onstageCaspeR/JustDownloadIT/releases) after uploading the first build.
+Installed Windows builds check the latest GitHub release at startup (at most once every 24 hours). If a newer version is found, the app asks before downloading or installing it. The installer download is checked against GitHub's SHA-256 asset digest or the release's `JustDownloadIT-Setup.exe.sha256` file. The update check sends no personal data. JustDownloadIT and all updates are free.
+
+Users on builds older than `1.2.0` must install that first updater-enabled release manually; older builds have no code that can check for updates. Later releases can be offered automatically by `1.2.0` and newer installed builds.
+
+For each release, use a semantic version tag such as `v1.2.0` and upload both:
+
+- `JustDownloadIT-Setup.exe`
+- `JustDownloadIT-Setup.exe.sha256` (the SHA-256 checksum of the exact installer)
+
+Create the checksum in PowerShell after compiling the installer:
+
+```powershell
+(Get-FileHash .\release\JustDownloadIT-Setup.exe -Algorithm SHA256).Hash.ToLower() |
+  Set-Content .\release\JustDownloadIT-Setup.exe.sha256 -NoNewline
+```
 
 
 
@@ -322,8 +336,7 @@ The original `icedown_settings.json` is a leftover from older versions and is **
 
 1. **`yt-dlp` site-extractor drift (MEDIUM)**
    - YouTube changes its response formats, cipher signatures, and endpoints regularly.
-   - **Mitigation**: pinning a specific yt-dlp version in requirements for reproducible builds, and tell users that an old `.exe` will eventually need to be rebuilt against a newer `yt-dlp`.
-   - Add an in-app "check for yt-dlp updates" helper if this goes long-term.
+   - **Mitigation**: publish a new release built against a current `yt-dlp`; the installed app checks GitHub Releases and offers the free app update at startup.
 
 2. **ffmpeg Windows URL hard-coded (LOW)**
    - `FFMPEG_WIN_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"` — if gyan.dev reorganizes their build archive, the first-time auto-download breaks on fresh Windows installs.

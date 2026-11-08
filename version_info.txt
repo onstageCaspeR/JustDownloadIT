@@ -1,0 +1,40 @@
+# UTF-8
+#
+# Windows version resource embedded into JustDownloadIT.exe by PyInstaller
+# (wired in through `version=` in JustDownloadIT.spec). Providing complete,
+# accurate file metadata is a normal packaging practice and helps scanners
+# assess the binary. Keep the numbers in sync with APP_VERSION in
+# JustDownloadIT.py and MyAppVersion in installer.iss.
+
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(1, 2, 0, 0),
+    prodvers=(1, 2, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          '040904B0',
+          [
+            StringStruct('CompanyName', 'JustDownloadIT'),
+            StringStruct('FileDescription', 'Just DownloadIT'),
+            StringStruct('FileVersion', '1.2.0.0'),
+            StringStruct('InternalName', 'JustDownloadIT'),
+            StringStruct('LegalCopyright', 'Copyright (c) 2026 onstageCaspeR'),
+            StringStruct('OriginalFilename', 'JustDownloadIT.exe'),
+            StringStruct('ProductName', 'Just DownloadIT'),
+            StringStruct('ProductVersion', '1.2.0.0'),
+          ]
+        )
+      ]
+    ),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)

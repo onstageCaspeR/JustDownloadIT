@@ -58,7 +58,7 @@ FFMPEG_DIR = os.path.join(APP_DIR, "ffmpeg_bin")
 BUNDLED_FFMPEG_DIR = os.path.join(BUNDLE_DIR, "ffmpeg_bin")
 RECENT_FILE = os.path.join(APP_DIR, "justdownloadit_recent.json")
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 GITHUB_REPOSITORY = "onstageCaspeR/JustDownloadIT"
 GITHUB_LATEST_RELEASE_API = (
     f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest"

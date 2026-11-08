@@ -8,8 +8,8 @@
 
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 2, 0, 0),
-    prodvers=(1, 2, 0, 0),
+    filevers=(1, 2, 1, 0),
+    prodvers=(1, 2, 1, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -25,12 +25,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'JustDownloadIT'),
             StringStruct('FileDescription', 'Just DownloadIT'),
-            StringStruct('FileVersion', '1.2.0.0'),
+            StringStruct('FileVersion', '1.2.1.0'),
             StringStruct('InternalName', 'JustDownloadIT'),
             StringStruct('LegalCopyright', 'Copyright (c) 2026 onstageCaspeR'),
             StringStruct('OriginalFilename', 'JustDownloadIT.exe'),
             StringStruct('ProductName', 'Just DownloadIT'),
-            StringStruct('ProductVersion', '1.2.0.0'),
+            StringStruct('ProductVersion', '1.2.1.0'),
           ]
         )
       ]

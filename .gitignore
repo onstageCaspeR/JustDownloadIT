@@ -6,9 +6,12 @@ __pycache__/
 build/
 dist/
 release_build/
+release_build_backup/
 standalone_test/
 installer_output/
 release/
+
+*.bak
 
 icedown_settings.json
 icedown_recent.json

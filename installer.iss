@@ -6,7 +6,7 @@
 ; solid compression (no UPX anywhere in the pipeline).
 
 #define MyAppName "JustDownloadIT"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.2.1"
 #define MyAppPublisher "JustDownloadIT"
 #define MyAppURL "https://github.com/onstageCaspeR/JustDownloadIT"
 #define MyAppExeName "JustDownloadIT.exe"
